@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,20 +7,15 @@ use std::{
 
 use crate::utils::{Error, Result};
 
+use super::Space;
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub spaces: Vec<Space>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
-pub struct Space {
-    pub name: String,
-    pub short: String,
-    pub path: PathBuf,
-}
-
+// associated functions
 impl Config {
     fn default() -> Self {
         Self { spaces: vec![] }
@@ -68,21 +64,57 @@ impl Config {
     }
 }
 
-impl Space {
-    pub fn new_from(name: String, raw_path: String) -> Result<Self> {
-        let short = match name.chars().next() {
-            Some(value) => value.to_string(),
-            None => String::from(""),
-        };
+// methods
+impl Config {
+    pub fn add_space(&mut self, name: String, path: String) -> Result<()> {
+        if !self.spaces.is_empty() {
+            if self.spaces.iter().any(|sp| sp.name.contains(&name)) {
+                return Err(Error::Generic(String::from(
+                    "El nombre ya se encuentra asociado a un espacio",
+                )));
+            }
 
-        let path = Path::new(&raw_path).to_path_buf();
+            if let Some(space) = self.spaces.iter().find(|sp| sp.path == Path::new(&path)) {
+                return Err(Error::Generic(String::from(format!(
+                    "El path se encuentra asociado al espacio llamado {}",
+                    space.name
+                ))));
+            }
+        }
 
-        if !path.exists() {
+        let new_space = Space::new_from(name, path)?;
+
+        self.spaces.push(new_space);
+        self.save()?;
+
+        Ok(())
+    }
+
+    pub fn list_space(&self, name: String) -> Result<()> {
+        let found_space = self
+            .spaces
+            .iter()
+            .find(|sp| sp.name == name)
+            .ok_or(Error::Generic(String::from("No se encontró el espacio")))?;
+
+        if !found_space.path.exists() {
             return Err(Error::Generic(String::from(
-                "El path ingresado no se logro encontrar",
+                "Directorio base no se encontró",
             )));
         }
 
-        Ok(Self { name, path, short })
+        for entry in WalkDir::new(&found_space.path).max_depth(1) {
+            println!("{}", entry?.path().display());
+        }
+
+        Ok(())
+    }
+
+    fn save(&self) -> Result<()> {
+        let cfg_file_path = Self::config_path()?;
+
+        fs::write(cfg_file_path, serde_json::to_string_pretty(self)?)?;
+
+        Ok(())
     }
 }
